@@ -1,0 +1,143 @@
+---
+title: "Project"
+author: "Akaash"
+date: "11/15/2020"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Import
+
+```{r cars}
+library(readr)
+emissions = read_csv('country_project.csv')
+nrow(emissions)
+emissions = emissions[complete.cases(emissions), ]
+emissions$Region <- as.factor(emissions$Region)
+emissions$Climate <- as.factor(emissions$Climate)
+nrow(emissions)
+summary(emissions)
+```
+
+## Train Test Split
+We want to split the data into train data and test data so that we can also compare the lasso and ridge regression models
+
+```{r}
+set.seed(1)
+train_cut = sample(1:nrow(emissions), floor(nrow(emissions)*0.8), replace=F)
+train = emissions[train_cut, 3:22]
+test = emissions[-train_cut,3:22]
+rmse <- function(x,y) sqrt(mean((x-y)^2))
+train
+test
+```
+
+## Linear model
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+attach(emissions)
+#Create a naive linear model (all predictors except for country name and index column)
+linear_model = lm(EM2016~., data = train)
+summary(linear_model)
+rmse(predict(linear_model, test), test$EM2016)
+```
+
+## Checking Assumption for Linear Model
+```{r}
+#Checking Assumptions
+library(faraway)
+library(car)
+plot(linear_model)
+halfnorm(rstandard(linear_model))
+```
+The linear model does not definitively pass the constant variance assumption because there are values that stand out.There seem to be two trends in the plot: in the dense region to the left, the residuals decrease for higher fitted values and in the sparse region to the right, the residuals seem to increase for higher fitted values. The linear model has a mediocre performance in the normality assumption check, but if we exclude outliers like 110 and 69, the Normal Q-Q plot does not look as bad. Since points do not fall on a straight line in the halfnorm(), there are outliers in the data (69 and 110). We will try to utilize transformations in order to get a better result.
+
+## Log Transformation Linear Model
+
+```{r}
+#Transformation
+log_linear = lm(log(EM2016)~., data = train)
+summary(log_linear)
+1-sum((train$EM2016-exp(log_linear$fit))/sum((train$EM2016-mean(train$EM2016))^2))
+```
+## Checking Assumptions for Log Linear Model
+```{r}
+plot(log_linear)
+halfnorm(rstandard(log_linear))
+```
+The log linear model seems to pass the constant variance assumption because the points on the chart are pretty evenly distributed. The scale for the residuals here is much smaller, which means that the log transformation performs better on the constant variation assumption check. The log linear model has a mediocre performance in the normality assumption check, but it does not look too bad, so we can say it passes the normality assumption check and proceed with caution. However, we do notice that this Normal Q-Q plot shows more favorable results than the Normal Q-Q plot for the strictly linear model. Since points do roughly fall on a straight line in the halfnorm(), there are no outliers in the data. We may try to utilize transformations in order to get an even better result.
+
+## Stepwise Regression
+
+```{r}
+library(MASS)
+step_model = step(log_linear)
+summary(step_model)
+rmse(predict(step_model, test), test$EM2016)
+```
+## Check Stepwise Assumptions
+```{r}
+plot(step_model)
+halfnorm(rstandard(step_model))
+```
+The stepwise model seems to pass the constant variance assumption because the points on the chart are pretty evenly distributed.The stepwise model does not pass the normality assumption because the standardized residuals clearly deviate from the theoretical quantiles at the tails. However, we do notice that this Normal Q-Q plot shows more favorable results than the Normal Q-Q plot for the strictly linear model. Since points do roughly fall on a straight line in the halfnorm(), there are no outliers in the data. We may try to utilize transformations in order to get an even better result.
+
+## Linear Model using Box Cox Transformation
+
+```{r}
+library(MASS)
+boxcox(linear_model, plotit = TRUE, lambda = seq(0, 0.5, 0.05))
+#The best lambda value would be 0.1
+boxcox_linear = lm(EM2016^0.1 ~., data = train)
+summary(boxcox_linear)
+1-sum((train$EM2016-boxcox_linear$fit^10)^2)/sum((train$EM2016-mean(train$EM2016))^2)
+```
+
+## Check Assumptions for Linear Model using Box Cox Transformation
+```{r}
+library(faraway)
+plot(boxcox_linear)
+halfnorm(rstandard(boxcox_linear))
+```
+The boxcox linear model seems to pass the constant variance assumption because points seems to be pretty evenly distributed on the residuals vs. fitted values plot. The boxcox linear model does pass the normality assumption because the standardized residuals do not deviate from the theoretical quantiles. Since points do not fall on a straight line in the halfnorm(), there are outliers in the data (71 and 63)
+
+Moving forward, we should use the log-transformation instead of the Box Cox. This is because, despite both models being moderately valid and seemingly trustworthy, the log-transformation yields marginally better results in terms of checking all the assumptions. What we can say definitively though is that the log and Box Cox transformations both yield better results than simply continuing with non-transformed data. 
+
+
+
+
+## Lasso Regression with Box Cox
+```{r}
+library(glmnet)
+xr=model.matrix(~., data = train[,-c(20)])
+yr= train$EM2016
+lasso.cv=cv.glmnet(xr,log(yr), standardize = TRUE)
+plot(lasso.cv)
+lasso.cv$lambda.min
+lasso=glmnet(xr,log(yr),lambda = lasso.cv$lambda.min,standardize = TRUE)
+summary(lasso)
+coef(lasso)
+
+ypred=predict.glmnet(lasso,newx = model.matrix(~., data = test[,-c(20)]))
+rmse(exp(ypred), test$EM2016)
+```
+## Ridge Regression
+```{r}
+ridges =lm.ridge(log(train$EM2016) ~ ., data = train[,-c(20)], lambda = seq(22,23, len=25))
+which.min(ridges$GCV)
+ridge_model = lm.ridge(log(train$EM2016) ~ ., data = train[,-c(20)], lambda = which.min(ridges$GCV))
+
+ypred_test <- (model.matrix(~., data = test[, -20])) %*% as.matrix(coef(ridges)[14,])
+rmse(exp(ypred_test), test$EM2016)
+coef(ridge_model)
+```
+
+
+
